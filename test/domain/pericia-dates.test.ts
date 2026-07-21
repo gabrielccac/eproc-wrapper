@@ -32,22 +32,15 @@ test("detects overdue pericia by date only in America/Sao_Paulo", () => {
   const now = new Date("2026-04-16T13:00:00.000Z"); // 10:00 BRT
   assert.equal(isOverduePericiaInBrt({
     periciado: "Cliente",
-    data: "13/04/2026",
+    data: "15/04/2026",
     horario: "23:59",
     local: "Forum",
     perito: "Perito",
   }, now), true);
   assert.equal(isOverduePericiaInBrt({
     periciado: "Cliente",
-    data: "14/04/2026",
-    horario: "23:59",
-    local: "Forum",
-    perito: "Perito",
-  }, now), false);
-  assert.equal(isOverduePericiaInBrt({
-    periciado: "Cliente",
-    data: "15/04/2026",
-    horario: "23:59",
+    data: "16/04/2026",
+    horario: "00:01",
     local: "Forum",
     perito: "Perito",
   }, now), false);

@@ -28,8 +28,8 @@ function getSessionFromPythonScript(
 
   return new Promise((resolve, reject) => {
     const child = spawn(
-      "xvfb-run",
-      ["-a", pythonExecutable, scriptName],
+      pythonExecutable,
+      [scriptName],
       {
         env: {
           ...process.env,

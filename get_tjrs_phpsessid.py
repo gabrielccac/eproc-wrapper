@@ -1,18 +1,21 @@
-from seleniumbase import Driver
-import time
-import json
 import base64
-from urllib.parse import unquote
+import json
 import os
 import sys
+import time
+from pathlib import Path
+from urllib.parse import unquote
+
 import pyotp
 from selenium.common.exceptions import UnexpectedAlertPresentException
-
+from seleniumbase import Driver
 
 EPROC_URL = "https://eproc1g.tjrs.jus.br/"
 FIRST_CAPTCHA_URL = "https://eproc1g.tjrs.jus.br/?acao=principal&acao_retorno=login"
 SECOND_CAPTCHA_URL = "https://eproc1g.tjrs.jus.br/index.php"
-OTP_URL_PREFIX = "https://keycloak-eks.tjrs.jus.br/realms/eproc/login-actions/authenticate"
+OTP_URL_PREFIX = (
+    "https://keycloak-eks.tjrs.jus.br/realms/eproc/login-actions/authenticate"
+)
 PANEL_URL_CONTAINS = "acao=painel_adv_listar"
 PANEL_READY_SELECTOR = 'a[aria-describedby="processoscomprazoemaberto"]'
 CAPTCHA_WAIT_SECONDS = 8.0
@@ -23,6 +26,29 @@ KEEP_BROWSER_OPEN_AFTER_FLOW = False
 
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+def load_local_env() -> None:
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        if not key:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+
+        os.environ[key] = value
 
 
 def get_required_env(name: str) -> str:
@@ -82,7 +108,9 @@ def wait_until_url_is(driver, expected_url: str, timeout_seconds: float = 30.0) 
     raise RuntimeError(f"Timed out waiting for URL: {expected_url}")
 
 
-def wait_until_url_contains(driver, expected_fragment: str, timeout_seconds: float = 30.0) -> None:
+def wait_until_url_contains(
+    driver, expected_fragment: str, timeout_seconds: float = 30.0
+) -> None:
     start = time.time()
     while time.time() - start < timeout_seconds:
         if expected_fragment in (driver.get_current_url() or ""):
@@ -103,7 +131,9 @@ def detect_post_login_step(driver, timeout_seconds: float = 20.0) -> str:
     while time.time() - start < timeout_seconds:
         current_url = (driver.get_current_url() or "").split("#")[0]
 
-        if current_url.startswith(OTP_URL_PREFIX) or has_element(driver, "#otp", timeout_seconds=0.5):
+        if current_url.startswith(OTP_URL_PREFIX) or has_element(
+            driver, "#otp", timeout_seconds=0.5
+        ):
             return "otp"
 
         if (
@@ -118,7 +148,9 @@ def detect_post_login_step(driver, timeout_seconds: float = 20.0) -> str:
 
         time.sleep(0.3)
 
-    raise RuntimeError("Timed out waiting for post-login step (captcha, OTP, or painel).")
+    raise RuntimeError(
+        "Timed out waiting for post-login step (captcha, OTP, or painel)."
+    )
 
 
 def decode_migration_data(data: str) -> list[dict]:
@@ -137,7 +169,7 @@ def decode_migration_data(data: str) -> list[dict]:
 
         account_len = decoded[i]
         i += 1
-        account_data = decoded[i:i + account_len]
+        account_data = decoded[i : i + account_len]
         i += account_len
 
         j = 0
@@ -153,7 +185,7 @@ def decode_migration_data(data: str) -> list[dict]:
 
             value_len = account_data[j]
             j += 1
-            value = account_data[j:j + value_len]
+            value = account_data[j : j + value_len]
             j += value_len
 
             if tag == 0x0A:
@@ -164,19 +196,21 @@ def decode_migration_data(data: str) -> list[dict]:
                 issuer = value.decode("utf-8", errors="ignore")
 
         if secret:
-            accounts.append({
-                "secret": base64.b32encode(secret).decode("utf-8"),
-                "name": name,
-                "issuer": issuer,
-            })
+            accounts.append(
+                {
+                    "secret": base64.b32encode(secret).decode("utf-8"),
+                    "name": name,
+                    "issuer": issuer,
+                }
+            )
 
     return accounts
 
 
 def get_otp_code() -> str:
     otp_export_data = get_required_env("OTP_EXPORT_DATA")
-    otp_profile_match = (os.getenv("OTP_PROFILE_MATCH") or "").strip()
-    otp_profile_index_raw = (os.getenv("OTP_PROFILE_INDEX") or "").strip()
+    otp_profile_match = (os.getenv("TJRS_OTP_PROFILE_MATCH") or "").strip()
+    otp_profile_index_raw = (os.getenv("TJRS_OTP_PROFILE_INDEX") or "").strip()
     otp_profile_index = int(otp_profile_index_raw) if otp_profile_index_raw else None
 
     payload = unquote(otp_export_data)
@@ -189,15 +223,21 @@ def get_otp_code() -> str:
     match_key = otp_profile_match.upper()
     if match_key:
         matched = [
-            acc for acc in accounts
-            if match_key in (acc.get("name", "").upper()) or match_key in (acc.get("issuer", "").upper())
+            acc
+            for acc in accounts
+            if match_key in (acc.get("name", "").upper())
+            or match_key in (acc.get("issuer", "").upper())
         ]
         if len(matched) == 1:
             selected = matched[0]
         elif len(matched) > 1:
-            labels = [f"{idx}: {acc.get('issuer','')} / {acc.get('name','')}" for idx, acc in enumerate(matched)]
+            labels = [
+                f"{idx}: {acc.get('issuer', '')} / {acc.get('name', '')}"
+                for idx, acc in enumerate(matched)
+            ]
             raise RuntimeError(
-                "OTP_PROFILE_MATCH is ambiguous. Matched accounts:\n" + "\n".join(labels)
+                "OTP_PROFILE_MATCH is ambiguous. Matched accounts:\n"
+                + "\n".join(labels)
             )
 
     if selected is None and otp_profile_index is not None:
@@ -206,7 +246,10 @@ def get_otp_code() -> str:
         selected = accounts[otp_profile_index]
 
     if selected is None:
-        labels = [f"{idx}: {acc.get('issuer','')} / {acc.get('name','')}" for idx, acc in enumerate(accounts)]
+        labels = [
+            f"{idx}: {acc.get('issuer', '')} / {acc.get('name', '')}"
+            for idx, acc in enumerate(accounts)
+        ]
         raise RuntimeError(
             "Could not select OTP profile. Adjust OTP_PROFILE_MATCH or OTP_PROFILE_INDEX.\n"
             + "\n".join(labels)
@@ -216,14 +259,15 @@ def get_otp_code() -> str:
 
 
 def main() -> None:
+    load_local_env()
     os.environ["XDG_SESSION_TYPE"] = "x11"
-    
+
     usuario = get_required_env("TJRS_USUARIO")
     senha = get_required_env("TJRS_SENHA")
 
     driver = Driver(
         uc=True,
-        headless=False,
+        headless=True,
     )
 
     try:
@@ -261,7 +305,9 @@ def main() -> None:
 
             log("OTP submitted.")
         elif step == "captcha":
-            log("Captcha step detected after login; keeping this path for future handling.")
+            log(
+                "Captcha step detected after login; keeping this path for future handling."
+            )
         elif step == "panel":
             log("Painel page reached directly after login.")
         else:

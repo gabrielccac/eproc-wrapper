@@ -1,5 +1,5 @@
 import { NOTIFICATIONS_CONFIG } from "../../config";
-import { isBrazilianDateBeforeDaysAgoInBrt } from "../../domain/brt-dates";
+import { isBrazilianDateBeforeDaysAgoInBrt, isBrazilianDateBeforeTodayInBrt } from "../../domain/brt-dates";
 import { getClientNameFromPartes, type ClientLookupRow } from "../../domain/client-resolution";
 import {
   buildNotificationDeliveryKey,
@@ -344,11 +344,7 @@ async function handlePericiaEvent(params: NotifyProcessEventParams): Promise<Eve
     alreadySentNotificationKeys,
   }));
 
-  const periciaIsOverdue = isOverduePericiaInBrt(
-    parsedPericia,
-    new Date(),
-    NOTIFICATIONS_CONFIG.clientMessageLookbackDays,
-  );
+  const periciaIsOverdue = isOverduePericiaInBrt(parsedPericia);
   const clientPhoneIsValid = await isValidClientWhatsApp({
     mode: notificationMode,
     clientPhone,
@@ -359,7 +355,7 @@ async function handlePericiaEvent(params: NotifyProcessEventParams): Promise<Eve
     notificationResults.push({
       channel: "whatsapp",
       status: "skipped",
-      reason: `Pericia date (${periciaDateLabel}) is before allowed window in America/Sao_Paulo`,
+      reason: `Pericia date (${periciaDateLabel}) is before today in America/Sao_Paulo`,
       summary: `Pericia WhatsApp - ${process.numero}`,
     });
   } else if (clientPhone && clientPhoneIsValid) {
@@ -482,16 +478,13 @@ async function handleLaudoEvent(params: NotifyProcessEventParams): Promise<Event
       alreadySentNotificationKeys,
     }));
 
-    const laudoEventIsOld = isBrazilianDateBeforeDaysAgoInBrt(
-      event.dataHora,
-      NOTIFICATIONS_CONFIG.clientMessageLookbackDays,
-    );
+    const laudoEventIsOld = isBrazilianDateBeforeTodayInBrt(event.dataHora);
     if (laudoEventIsOld) {
       const laudoDateLabel = (event.dataHora || "").trim() || "unknown";
       notificationResults.push({
         channel: "whatsapp",
         status: "skipped",
-        reason: `Laudo event date (${laudoDateLabel}) is before allowed window in America/Sao_Paulo`,
+        reason: `Laudo event date (${laudoDateLabel}) is before today in America/Sao_Paulo`,
         summary: `Laudo WhatsApp - ${process.numero}`,
       });
     } else if (clientPhone && clientPhoneIsValid) {

@@ -1,13 +1,14 @@
-from seleniumbase import Driver
-import time
-import json
 import base64
-from urllib.parse import unquote
+import json
 import os
 import sys
+import time
+from pathlib import Path
+from urllib.parse import unquote
+
 import pyotp
 from selenium.common.exceptions import UnexpectedAlertPresentException
-
+from seleniumbase import Driver
 
 JFRS_URL = "https://eproc.jfrs.jus.br/eprocV2/externo_controlador.php"
 FIRST_CAPTCHA_URL = "https://eproc.jfrs.jus.br/eprocV2/externo_controlador.php?acao=principal&acao_retorno=login"
@@ -18,9 +19,38 @@ CAPTCHA_WAIT_SECONDS = 8.0
 CAPTCHA_RETRY_ATTEMPTS = 5
 CAPTCHA_RETRY_WAIT_SECONDS = 1.5
 
+LOGIN_USERNAME_SELECTORS = ["#username", "#txtUsuario"]
+LOGIN_PASSWORD_SELECTORS = ["#password", "#pwdSenha"]
+LOGIN_SUBMIT_SELECTORS = ["#kc-login", "#sbmEntrar"]
+OTP_INPUT_SELECTORS = ["#otp", "#txtAcessoCodigo"]
+OTP_SUBMIT_SELECTORS = ["#kc-login", "#btnValidar"]
+
 
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+def load_local_env() -> None:
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        if not key:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+
+        os.environ[key] = value
 
 
 def get_required_env(name: str) -> str:
@@ -80,7 +110,9 @@ def wait_until_url_is(driver, expected_url: str, timeout_seconds: float = 30.0) 
     raise RuntimeError(f"Timed out waiting for URL: {expected_url}")
 
 
-def wait_until_url_contains(driver, expected_fragment: str, timeout_seconds: float = 30.0) -> None:
+def wait_until_url_contains(
+    driver, expected_fragment: str, timeout_seconds: float = 30.0
+) -> None:
     start = time.time()
     while time.time() - start < timeout_seconds:
         if expected_fragment in (driver.get_current_url() or ""):
@@ -96,12 +128,42 @@ def has_element(driver, selector: str, timeout_seconds: float = 0.8) -> bool:
         return False
 
 
+def has_any(driver, selectors: list[str], timeout_seconds: float = 0.8) -> bool:
+    return any(
+        has_element(driver, sel, timeout_seconds=timeout_seconds) for sel in selectors
+    )
+
+
+def wait_for_any(driver, selectors: list[str], timeout_seconds: float = 15.0):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        for sel in selectors:
+            try:
+                el = driver.wait_for_element(sel, timeout=0.4)
+                if el is not None:
+                    return el, sel
+            except Exception:
+                continue
+        time.sleep(0.2)
+    return None, None
+
+
+def click_any(
+    driver, selectors: list[str], timeout_seconds: float = 10.0
+) -> str | None:
+    el, sel = wait_for_any(driver, selectors, timeout_seconds=timeout_seconds)
+    if el is None:
+        return None
+    driver.click(sel)
+    return sel
+
+
 def detect_post_login_step(driver, timeout_seconds: float = 20.0) -> str:
     start = time.time()
     while time.time() - start < timeout_seconds:
         current_url = (driver.get_current_url() or "").split("#")[0]
 
-        if has_element(driver, "#txtAcessoCodigo", timeout_seconds=0.5):
+        if has_any(driver, OTP_INPUT_SELECTORS, timeout_seconds=0.4):
             return "otp"
 
         if (
@@ -137,7 +199,7 @@ def decode_migration_data(data: str) -> list[dict]:
 
         account_len = decoded[i]
         i += 1
-        account_data = decoded[i:i + account_len]
+        account_data = decoded[i : i + account_len]
         i += account_len
 
         j = 0
@@ -153,7 +215,7 @@ def decode_migration_data(data: str) -> list[dict]:
 
             value_len = account_data[j]
             j += 1
-            value = account_data[j:j + value_len]
+            value = account_data[j : j + value_len]
             j += value_len
 
             if tag == 0x0A:
@@ -164,11 +226,13 @@ def decode_migration_data(data: str) -> list[dict]:
                 issuer = value.decode("utf-8", errors="ignore")
 
         if secret:
-            accounts.append({
-                "secret": base64.b32encode(secret).decode("utf-8"),
-                "name": name,
-                "issuer": issuer,
-            })
+            accounts.append(
+                {
+                    "secret": base64.b32encode(secret).decode("utf-8"),
+                    "name": name,
+                    "issuer": issuer,
+                }
+            )
 
     return accounts
 
@@ -188,15 +252,21 @@ def get_otp_code() -> str:
     match_key = otp_profile_match.upper()
     if match_key:
         matched = [
-            acc for acc in accounts
-            if match_key in (acc.get("name", "").upper()) or match_key in (acc.get("issuer", "").upper())
+            acc
+            for acc in accounts
+            if match_key in (acc.get("name", "").upper())
+            or match_key in (acc.get("issuer", "").upper())
         ]
         if len(matched) == 1:
             selected = matched[0]
         elif len(matched) > 1:
-            labels = [f"{idx}: {acc.get('issuer','')} / {acc.get('name','')}" for idx, acc in enumerate(matched)]
+            labels = [
+                f"{idx}: {acc.get('issuer', '')} / {acc.get('name', '')}"
+                for idx, acc in enumerate(matched)
+            ]
             raise RuntimeError(
-                "OTP_PROFILE_MATCH is ambiguous. Matched accounts:\n" + "\n".join(labels)
+                "OTP_PROFILE_MATCH is ambiguous. Matched accounts:\n"
+                + "\n".join(labels)
             )
 
     if selected is None and otp_profile_index is not None:
@@ -205,7 +275,10 @@ def get_otp_code() -> str:
         selected = accounts[otp_profile_index]
 
     if selected is None:
-        labels = [f"{idx}: {acc.get('issuer','')} / {acc.get('name','')}" for idx, acc in enumerate(accounts)]
+        labels = [
+            f"{idx}: {acc.get('issuer', '')} / {acc.get('name', '')}"
+            for idx, acc in enumerate(accounts)
+        ]
         raise RuntimeError(
             "Could not select OTP profile. Adjust OTP_PROFILE_MATCH or OTP_PROFILE_INDEX.\n"
             + "\n".join(labels)
@@ -215,48 +288,72 @@ def get_otp_code() -> str:
 
 
 def main() -> None:
+    load_local_env()
     os.environ["XDG_SESSION_TYPE"] = "x11"
-    
-    usuario = get_required_env("JFRS_USUARIO")
-    senha = get_required_env("JFRS_SENHA")
+
+    usuario = get_required_env("EPROC_USUARIO")
+    senha = get_required_env("EPROC_SENHA")
 
     driver = Driver(
         uc=True,
         headless=True,
+        locale="pt-BR",
+        agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     )
+    try:
+        driver.execute_cdp_cmd(
+            "Network.setExtraHTTPHeaders",
+            {"headers": {"Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"}},
+        )
+    except Exception as exc:
+        log(f"Could not set Accept-Language header: {exc}")
 
     try:
         driver.get(JFRS_URL)
 
-        usuario_input = driver.wait_for_element("#txtUsuario", timeout=15)
-        senha_input = driver.wait_for_element("#pwdSenha", timeout=15)
+        usuario_input, user_sel = wait_for_any(
+            driver, LOGIN_USERNAME_SELECTORS, timeout_seconds=15
+        )
+        senha_input, pwd_sel = wait_for_any(
+            driver, LOGIN_PASSWORD_SELECTORS, timeout_seconds=15
+        )
 
         if usuario_input is None or senha_input is None:
             raise RuntimeError("Could not locate login input fields.")
+        log(f"Login form detected ({user_sel}, {pwd_sel}).")
         usuario_input.send_keys(usuario)
 
         senha_input.send_keys(senha)
-        driver.click("#sbmEntrar")
+        submit_sel = click_any(driver, LOGIN_SUBMIT_SELECTORS, timeout_seconds=10)
+        if not submit_sel:
+            raise RuntimeError("Could not locate login submit button.")
+        log(f"Login submitted via {submit_sel}.")
         step = detect_post_login_step(driver, timeout_seconds=20.0)
 
         captcha_count = 0
         while step == "captcha":
             captcha_count += 1
-            log(f"Captcha page detected (step {captcha_count}). Waiting for auto-solver...")
+            log(
+                f"Captcha page detected (step {captcha_count}). Waiting for auto-solver..."
+            )
             time.sleep(CAPTCHA_WAIT_SECONDS)
             click_captcha_submit(driver)
             step = detect_post_login_step(driver, timeout_seconds=20.0)
 
         if step == "otp":
-            otp_input = driver.wait_for_element("#txtAcessoCodigo", timeout=15)
-            log("OTP page reached (#txtAcessoCodigo found).")
+            otp_input, otp_sel = wait_for_any(
+                driver, OTP_INPUT_SELECTORS, timeout_seconds=15
+            )
+            log(f"OTP page reached ({otp_sel} found).")
             if otp_input is None:
                 raise RuntimeError("Could not locate OTP input field.")
 
             otp_code = get_otp_code()
             otp_input.send_keys(otp_code)
-            driver.click("#btnValidar")
-            log("OTP submitted.")
+            submit_sel = click_any(driver, OTP_SUBMIT_SELECTORS, timeout_seconds=10)
+            if not submit_sel:
+                raise RuntimeError("Could not locate OTP submit button.")
+            log(f"OTP submitted via {submit_sel}.")
         elif step == "panel":
             log("Painel page reached directly after login/captcha.")
         else:

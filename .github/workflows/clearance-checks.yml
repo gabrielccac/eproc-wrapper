@@ -1,0 +1,143 @@
+name: Clearance Checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/clearance-checks.yml"
+      - "get-clearance.py"
+      - "get-clearance-cloakbrowser.py"
+  pull_request:
+    paths:
+      - ".github/workflows/clearance-checks.yml"
+      - "get-clearance.py"
+      - "get-clearance-cloakbrowser.py"
+
+jobs:
+  seleniumbase-headless:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install Python dependencies
+        run: pip install seleniumbase
+
+      - name: Show browser versions
+        shell: bash
+        run: |
+          python --version
+          if command -v google-chrome >/dev/null 2>&1; then
+            google-chrome --version
+          elif command -v chrome >/dev/null 2>&1; then
+            chrome --version
+          else
+            echo "Chrome binary not found on PATH"
+            exit 1
+          fi
+
+      - name: Run SeleniumBase clearance script
+        env:
+          CF_TITLE_TIMEOUT_SECONDS: "180"
+        run: python get-clearance.py
+
+  cloakbrowser-headed:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            libnss3 \
+            libnspr4 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdbus-1-3 \
+            libdrm2 \
+            libxkbcommon0 \
+            libatspi2.0-0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libgbm1 \
+            libpango-1.0-0 \
+            libcairo2 \
+            libasound2 \
+            libx11-xcb1 \
+            libfontconfig1 \
+            libx11-6 \
+            libxcb1 \
+            libxext6 \
+            libxshmfence1 \
+            libglib2.0-0 \
+            libgtk-3-0 \
+            libpangocairo-1.0-0 \
+            libcairo-gobject2 \
+            libgdk-pixbuf-2.0-0 \
+            libxss1 \
+            libxtst6 \
+            fonts-liberation \
+            fonts-noto-color-emoji \
+            fonts-unifont \
+            fonts-freefont-ttf \
+            ca-certificates
+
+      - name: Install Python dependencies
+        run: pip install cloakbrowser
+
+      - name: Install CloakBrowser binary
+        run: python -m cloakbrowser install
+
+      - name: Run CloakBrowser clearance script in headed mode on Linux
+        if: runner.os == 'Linux'
+        env:
+          DISPLAY: ":99"
+          XDG_SESSION_TYPE: "x11"
+          CLOAKBROWSER_HEADLESS: "false"
+          CF_TITLE_TIMEOUT_SECONDS: "180"
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+          python get-clearance-cloakbrowser.py
+
+      - name: Run CloakBrowser clearance script in headed mode on Windows
+        if: runner.os == 'Windows'
+        env:
+          CLOAKBROWSER_HEADLESS: "false"
+          CF_TITLE_TIMEOUT_SECONDS: "180"
+        run: python get-clearance-cloakbrowser.py

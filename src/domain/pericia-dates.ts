@@ -4,7 +4,6 @@ import {
   compareDateTimeParts,
   getNowDatePartsInBrt,
   getNowDateTimePartsInBrt,
-  isBrazilianDateBeforeDaysAgoInBrt,
   parseBrazilianDateParts,
   type DateTimeParts,
 } from "./brt-dates";
@@ -33,7 +32,6 @@ export function parsePericiaDateTimeInBrt(pericia: ParsedPericia): DateTimeParts
 export {
   compareDateParts,
   compareDateTimeParts,
-  isBrazilianDateBeforeDaysAgoInBrt,
   getNowDatePartsInBrt,
   getNowDateTimePartsInBrt,
 };
@@ -41,11 +39,11 @@ export {
 export function isOverduePericiaInBrt(
   pericia: ParsedPericia,
   now: Date = new Date(),
-  lookbackDays: number = 2,
 ): boolean {
-  if (!pericia.data) {
+  const periciaDate = parsePericiaDateInBrt(pericia);
+  if (!periciaDate) {
     return false;
   }
 
-  return isBrazilianDateBeforeDaysAgoInBrt(pericia.data, lookbackDays, now);
+  return compareDateParts(periciaDate, getNowDatePartsInBrt(now)) < 0;
 }
